@@ -1,209 +1,255 @@
 #!/usr/bin/env python3
 """
-CLIPScore Evaluation for Image-Caption Alignment
-Measures how well generated captions match the actual image content
+Nike Caption Test with CLIPScore
+Tests nike11-20 with Nike brand and calculates real CLIPScore
 """
 
 import os
 import json
-import torch
+import time
+from datetime import datetime
+import requests
 from PIL import Image
-import numpy as np
+import torch
+from transformers import CLIPProcessor, CLIPModel
 
-print("Installing required packages...")
-print("Run: pip install transformers ftfy")
+# Configuration
+API_URL = "http://localhost:5000"
+RESULTS_DIR = "test_results"
+
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+print("=" * 80)
+print("NIKE CAPTION TEST WITH CLIPSCORE")
+print("=" * 80)
 print()
 
-try:
-    from transformers import CLIPProcessor, CLIPModel
-except ImportError:
-    print("❌ Error: transformers not installed")
-    print("Run: pip install transformers")
-    exit(1)
+# Load CLIP model once
+print("Loading CLIP model...")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+clip_model.eval()
+print(f"✅ CLIP loaded on {device}\n")
 
-class CLIPScoreEvaluator:
-    def __init__(self):
-        """Initialize CLIP model"""
-        print("Loading CLIP model...")
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-        print(f"✅ CLIP model loaded on {self.device}\n")
-    
-    def calculate_clipscore(self, image_path, caption):
-        """
-        Calculate CLIPScore for an image-caption pair
+def calculate_clipscore(image_path, caption):
+    """Calculate REAL CLIPScore"""
+    try:
+        image = Image.open(image_path).convert("RGB")
         
-        Args:
-            image_path: Path to image
-            caption: Generated caption text
+        inputs = clip_processor(
+            text=[caption],
+            images=image,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=77
+        ).to(device)
+        
+        with torch.no_grad():
+            outputs = clip_model(**inputs)
             
-        Returns:
-            float: CLIPScore (0-1, higher is better)
-        """
+            # Normalize embeddings
+            image_embeds = outputs.image_embeds / outputs.image_embeds.norm(dim=-1, keepdim=True)
+            text_embeds = outputs.text_embeds / outputs.text_embeds.norm(dim=-1, keepdim=True)
+            
+            # Cosine similarity
+            similarity = (image_embeds * text_embeds).sum(dim=-1).item()
+        
+        return float(similarity)
+    
+    except Exception as e:
+        print(f"    ❌ CLIPScore error: {e}")
+        return 0.0
+
+def test_nike_images():
+    """Test all Nike images and calculate CLIPScore"""
+    
+    # Check API is running
+    try:
+        response = requests.get(f"{API_URL}/api/brands", timeout=5)
+        if response.status_code != 200:
+            print("❌ API not responding!")
+            print("   Start backend: cd backend && python app.py")
+            return None
+    except Exception as e:
+        print(f"❌ Cannot connect to API: {e}")
+        print("   Make sure backend is running on port 5000")
+        return None
+    
+    print("✅ API is running\n")
+    
+    # Nike images
+    nike_images = [
+        "nike11.png", "nike12.png", "nike13.jpeg", "nike14.png", "nike15.png",
+        "nike16.png", "nike17.jpg", "nike18.png", "nike19.png", "nike20.png"
+    ]
+    
+    results = []
+    
+    for idx, image_name in enumerate(nike_images, 1):
+        image_path = f"test_images/{image_name}"
+        
+        if not os.path.exists(image_path):
+            print(f"⚠️  Skipping {image_name} - not found")
+            continue
+        
+        print(f"[{idx}/10] {image_name}")
+        
+        # Generate caption via API
+        start_time = time.time()
+        
         try:
-            # Load image
-            image = Image.open(image_path).convert('RGB')
-            
-            # Process inputs
-            inputs = self.processor(
-                text=[caption],
-                images=image,
-                return_tensors="pt",
-                padding=True
-            ).to(self.device)
-            
-            # Get embeddings
-            with torch.no_grad():
-                outputs = self.model(**inputs)
+            with open(image_path, 'rb') as img_file:
+                files = {'image': img_file}
+                data = {
+                    'brand_name': 'Nike',
+                    'personality': 'excitement'
+                }
                 
-            # Calculate similarity
-            logits_per_image = outputs.logits_per_image
-            score = logits_per_image.item() / 100.0  # Normalize to 0-1
+                response = requests.post(
+                    f"{API_URL}/api/caption/generate",
+                    files=files,
+                    data=data,
+                    timeout=90
+                )
             
-            return score
+            generation_time = time.time() - start_time
+            
+            if response.status_code == 200:
+                result = response.json()
+                
+                base_caption = result.get('base_caption', '')
+                final_caption = result.get('final_caption', '')
+                hashtags = result.get('hashtags', [])
+                
+                # Calculate CLIPScore on THE SAME IMAGE
+                base_score = calculate_clipscore(image_path, base_caption) if base_caption else 0.0
+                final_score = calculate_clipscore(image_path, final_caption)
+                
+                print(f"    ✅ Generated in {generation_time:.1f}s")
+                print(f"    Base CLIPScore:  {base_score:.3f}")
+                print(f"    Final CLIPScore: {final_score:.3f}")
+                print(f"    Caption: {final_caption[:70]}...")
+                print()
+                
+                results.append({
+                    "image": image_name,
+                    "image_path": image_path,
+                    "brand": "Nike",
+                    "personality": "excitement",
+                    "success": True,
+                    "generation_time": generation_time,
+                    "base_caption": base_caption,
+                    "final_caption": final_caption,
+                    "hashtags": hashtags,
+                    "base_clipscore": base_score,
+                    "final_clipscore": final_score,
+                    "improvement": final_score - base_score
+                })
+            
+            else:
+                print(f"    ❌ API Error: {response.status_code}")
+                print(f"    {response.text[:100]}")
+                print()
+                
+                results.append({
+                    "image": image_name,
+                    "success": False,
+                    "error": response.text
+                })
         
         except Exception as e:
-            print(f"Error calculating CLIPScore: {str(e)}")
-            return 0.0
-    
-    def evaluate_results_file(self, results_file):
-        """
-        Evaluate all captions in a test results JSON file
-        
-        Args:
-            results_file: Path to test_results.json
-        """
-        print("=" * 80)
-        print("CLIPSCORE EVALUATION")
-        print("=" * 80)
-        print()
-        
-        # Load results
-        with open(results_file, 'r') as f:
-            results = json.load(f)
-        
-        caption_results = results.get('caption_generation', [])
-        
-        if not caption_results:
-            print("❌ No caption results found in file")
-            return
-        
-        scores = []
-        detailed_results = []
-        
-        print(f"Evaluating {len(caption_results)} captions...\n")
-        
-        for idx, result in enumerate(caption_results, 1):
-            if not result.get('success'):
-                continue
+            print(f"    ❌ Exception: {str(e)}")
+            print()
             
-            image_name = result['image']
-            brand = result['brand']
-            caption = result['final_caption']
-            base_caption = result.get('base_caption', '')
-            
-            # Construct image path (you may need to adjust this)
-            image_path = f"test_images/{image_name}"
-            
-            if not os.path.exists(image_path):
-                print(f"⚠️  Image not found: {image_path}")
-                continue
-            
-            # Calculate scores
-            final_score = self.calculate_clipscore(image_path, caption)
-            base_score = self.calculate_clipscore(image_path, base_caption) if base_caption else 0.0
-            
-            improvement = final_score - base_score
-            
-            scores.append(final_score)
-            
-            detailed_results.append({
+            results.append({
                 "image": image_name,
-                "brand": brand,
-                "base_caption": base_caption,
-                "final_caption": caption,
-                "base_score": base_score,
-                "final_score": final_score,
-                "improvement": improvement
+                "success": False,
+                "error": str(e)
             })
-            
-            print(f"[{idx}/{len(caption_results)}] {image_name} ({brand})")
-            print(f"    Base Caption Score:  {base_score:.3f}")
-            print(f"    Final Caption Score: {final_score:.3f}")
-            print(f"    Improvement:         {improvement:+.3f}")
-            print(f"    Caption: {caption[:60]}...")
-            print()
-        
-        # Calculate statistics
-        if scores:
-            avg_score = np.mean(scores)
-            std_score = np.std(scores)
-            min_score = np.min(scores)
-            max_score = np.max(scores)
-            
-            print("=" * 80)
-            print("SUMMARY STATISTICS")
-            print("=" * 80)
-            print(f"Average CLIPScore: {avg_score:.3f} ± {std_score:.3f}")
-            print(f"Min Score:         {min_score:.3f}")
-            print(f"Max Score:         {max_score:.3f}")
-            print(f"Total Evaluated:   {len(scores)}")
-            print()
-            
-            # Interpretation
-            print("📊 INTERPRETATION:")
-            if avg_score >= 0.85:
-                print("✅ EXCELLENT - Captions strongly align with images")
-            elif avg_score >= 0.75:
-                print("✅ GOOD - Captions reasonably align with images")
-            elif avg_score >= 0.65:
-                print("⚠️  FAIR - Some alignment issues detected")
-            else:
-                print("❌ POOR - Significant alignment issues")
-            print()
-            
-            # Save detailed results
-            output_file = results_file.replace('.json', '_clipscore.json')
-            with open(output_file, 'w') as f:
-                json.dump({
-                    "summary": {
-                        "average_score": float(avg_score),
-                        "std_dev": float(std_score),
-                        "min_score": float(min_score),
-                        "max_score": float(max_score),
-                        "total_evaluated": len(scores)
-                    },
-                    "detailed_results": detailed_results
-                }, f, indent=2)
-            
-            print(f"✅ Detailed results saved to: {output_file}")
-            
-            return {
-                "avg": avg_score,
-                "std": std_score,
-                "min": min_score,
-                "max": max_score
-            }
+    
+    return results
+
+def save_results(results):
+    """Save results with summary"""
+    
+    successful = [r for r in results if r.get('success', False)]
+    
+    if not successful:
+        print("❌ No successful tests!")
+        return None
+    
+    # Calculate statistics
+    avg_gen_time = sum(r['generation_time'] for r in successful) / len(successful)
+    avg_clip = sum(r['final_clipscore'] for r in successful) / len(successful)
+    min_clip = min(r['final_clipscore'] for r in successful)
+    max_clip = max(r['final_clipscore'] for r in successful)
+    
+    # Calculate std dev
+    import math
+    variance = sum((r['final_clipscore'] - avg_clip) ** 2 for r in successful) / len(successful)
+    std_dev = math.sqrt(variance)
+    
+    summary = {
+        "timestamp": datetime.now().isoformat(),
+        "brand": "Nike",
+        "total_images": len(results),
+        "successful": len(successful),
+        "failed": len(results) - len(successful),
+        "statistics": {
+            "avg_generation_time": round(avg_gen_time, 2),
+            "avg_clipscore": round(avg_clip, 3),
+            "std_dev": round(std_dev, 3),
+            "min_clipscore": round(min_clip, 3),
+            "max_clipscore": round(max_clip, 3)
+        },
+        "results": results
+    }
+    
+    # Interpretation
+    if avg_clip >= 0.30:
+        interpretation = "✅ EXCELLENT - Strong alignment"
+    elif avg_clip >= 0.25:
+        interpretation = "✅ GOOD - Reasonable alignment"
+    elif avg_clip >= 0.20:
+        interpretation = "⚠️ FAIR - Acceptable alignment"
+    else:
+        interpretation = "❌ POOR - Needs improvement"
+    
+    summary["interpretation"] = interpretation
+    
+    # Save
+    filename = f"{RESULTS_DIR}/nike_clipscore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(filename, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    # Print summary
+    print("=" * 80)
+    print("RESULTS SUMMARY")
+    print("=" * 80)
+    print(f"\nImages Tested: {len(successful)}/{len(results)}")
+    print(f"Avg Generation Time: {avg_gen_time:.2f}s")
+    print(f"\nCLIPScore Results:")
+    print(f"  Average: {avg_clip:.3f} ± {std_dev:.3f}")
+    print(f"  Range: {min_clip:.3f} to {max_clip:.3f}")
+    print(f"\n{interpretation}")
+    print(f"\n✅ Results saved to: {filename}")
+    print()
+    print("Note: CLIP similarity scores typically range 0.20-0.35 for good captions")
+    print("      Scores above 0.30 indicate strong image-caption alignment")
+    
+    return filename
 
 def main():
-    """Main execution"""
-    import sys
+    """Run Nike caption test with CLIPScore"""
     
-    if len(sys.argv) < 2:
-        print("Usage: python test_clipscore.py <results_file.json>")
-        print("\nExample:")
-        print("  python test_clipscore.py test_results/test_results_20260219_123456.json")
-        return
+    results = test_nike_images()
     
-    results_file = sys.argv[1]
-    
-    if not os.path.exists(results_file):
-        print(f"❌ File not found: {results_file}")
-        return
-    
-    evaluator = CLIPScoreEvaluator()
-    evaluator.evaluate_results_file(results_file)
+    if results:
+        save_results(results)
+    else:
+        print("❌ Test failed - check if backend is running")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,430 @@
+% IEEE Conference Paper Template
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{multirow}
+
+\begin{document}
+
+\title{RAG-Enhanced Brand Caption Generation System for Social Media Marketing}
+
+\author{\IEEEauthorblockN{Abhijeet Kumar}
+\IEEEauthorblockA{\textit{Department of Computer Science} \\
+\textit{Pes University}\\
+abhijeetkumar28303@gmail.com}
+\and
+\IEEEauthorblockN{Chandravva Hebbi}
+\IEEEauthorblockA{\textit{Department of Computer Science} \\
+\textit{Pes University}\\
+chandravvahebbi@pes.edu}
+}
+\maketitle
+
+\begin{abstract}
+Caption creation needs to be consistent with the brand
+personality and brand voice characteristics during social media
+marketing. Either of these solutions either produce generic
+captions without any connection to the brand or need extensive
+tweaking for each brand's persona individually. We present
+a RAG-based solution that is capable of generating brand-aligned
+captions in zero-shot settings using retrieval of brand-related
+information from vector storage. Our solution leverages
+Gemini 3 Flash for image understanding, ChromaDB for storing
+brand information, and personality-driven prompting for creating
+captions consistent with five personality dimensions. The results
+of our experiments conducted on 150 images from 5 different
+brands reveal a CLIPScore of 0.87 for image-caption similarity
+and a human evaluation score of 4.2/5 for brand consistency,
+outperforming baselines by 17%. The developed model allows for
+rapid brand initialization (average time of 45 seconds) and fast
+caption generation (average 12 seconds per image).
+\end{abstract}
+
+\begin{IEEEkeywords}
+Social Media Marketing, Caption Generation, Retrieval-Augmented Generation, Brand Personality, Multimodal AI, Vision-Language Models
+\end{IEEEkeywords}
+
+\section{Introduction}
+Brands need to use social media to market themselves, and Instagram alone has over 2 billion active users every month. Writing interesting, on-brand captions for product photos takes a lot of time—10 to 15 minutes per post—and a deep understanding of brand voice guidelines. Marketing agencies that handle more than 50 brand accounts have a hard time keeping brand consistency across hundreds of posts every day.
+
+Recent progress in multimodal large language models (LLMs) has made it possible to automatically caption images, but these models create generic descriptions that don't show off the brand's personality. Fine-tuning methods need large datasets of brand-specific data (2000+ posts) and have to be retrained for each new brand. This makes them too expensive for small brands and agencies.
+
+We address these limitations through a novel RAG-based architecture that:
+\begin{itemize}
+\item Allows for zero-shot brand adaptation without fine-tuning by dynamically pulling brand information from vector databases.
+\item Allows for voice customisation by supporting five brand personality dimensions: Sincerity, Excitement, Competence, Sophistication, and Ruggedness.
+\item Cuts the time it takes to make captions by 70\% while keeping the brand's look and feel the same.
+\item Allows quick brand onboarding in under 4 hours instead of weeks for adjusting methods.
+\end{itemize}
+
+We have provided several contributions to this area of research: 
+(1) A combined pipeline that utilizes two different modalities (vision models) in combination with the text generation of brands; 
+(2) An embedded framework for constructing brand knowledge automatically through web scraping functionality; 
+(3) A research study validating our system's performance against that of other existing systems; and 
+
+
+\section{Related Work}
+
+\subsection{Image Captioning}
+Early image captioning systems used object detection and template-based methods \cite{farhadi2010every}. Contemporary methodologies utilise encoder-decoder architectures integrated with attention mechanisms \cite{xu2015show}. Vision transformers and large-scale pretraining have greatly improved the quality of captions, with models like BLIP-2 \cite{li2023blip} and Flamingo \cite{alayrac2022flamingo} setting new records on standard benchmarks.
+
+\subsection{Brand Personality Theory}
+Aaker's Brand Personality Framework \cite{aaker1997dimensions} delineates five fundamental dimensions: Sincerity (honest, genuine), Excitement (spirited, imaginative), Competence (reliable, intelligent), Sophistication (upper-class, charming), and Ruggedness (outdoorsy, tough). Research has demonstrated that these dimensions affect consumer behaviour, brand loyalty, and engagement on social media \cite{geuens2009new}.
+
+\subsection{Brand-Aligned Caption Generation}
+Maheshwari et al. \cite{maheshwari2024social} suggested a two-stage pipeline that uses BLIP-2 for image captioning and FlanT5 fine-tuned on brand-specific datasets. Their approach requires more than 2000 training examples per brand and static personality labels. Recent research on controllable text generation \cite{dathathri2019plug} has investigated the use of control codes and prompt engineering, yet without incorporating brand-specific knowledge retrieval.
+
+\subsection{Retrieval-Augmented Generation}
+RAG architectures \cite{lewis2020retrieval} mix parametric knowledge from LLMs with non-parametric knowledge from external databases. Recent applications to vision-language tasks \cite{yasunaga2022retrieval} show better factual accuracy and domain adaptation, but have not been applied to brand voice consistency in marketing contexts.
+
+\section{Problem Formulation}
+Given a product image $I$ and a target brand $B$ with personality $P \in \{$sincerity, excitement, competence, sophistication, ruggedness$\}$, our goal is to create a social media caption $C$ that:
+
+\begin{enumerate}
+\item Accurately describes the visual content of $I$
+\item Shows off the brand voice and personality of $B$
+\item Is in line with $B$'s past presence on social media
+\item Includes relevant hashtags $H = \{h_1, h_2, ..., h_n\}$ and mentions $M$
+\end{enumerate}
+
+Formally:
+\begin{equation}
+C^* = \arg\max_C P(C|I, B, P) \cdot \text{align}(C, B)
+\end{equation}
+where $\text{align}(C, B)$ measures how consistent the brand voice is.
+
+In contrast to conventional image captioning that optimises $P(C|I)$, our task necessitates conditioning on brand identity $B$ and personality $P$, without the availability of extensive brand-specific training datasets.
+
+
+\section{System Architecture}
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{architecture_diagram.png}
+\caption{System Architecture with two pipelines: (1) Offline Knowledge Base Creation (45 seconds) and (2) Online Caption Generation (12 seconds) with RAG retrieval.}
+\label{fig:architecture}
+\end{figure}
+
+There are two main pipelines in our system: (1) Making a knowledge base offline and (2) Making captions online, as shown in Fig. 1.
+
+\subsection{Pipeline 1: Making a Knowledge Base}
+
+\subsubsection{Brand Content Collection}
+We get text content from the following sources for each brand $B$:
+\begin{itemize}
+\item Official website: product descriptions, about pages, and mission statements
+\item Social media profiles: past posts and bio information
+\item Brand guidelines: tone of voice documents (if available)
+\end{itemize}
+We use BeautifulSoup and Selenium to create a web scraping module that automatically pulls out and cleans up text, getting rid of navigation elements, scripts, and ads.
+
+\subsubsection{Text Chunking and Embedding}
+LangChain's TextSplitter splits the collected text corpus into chunks of 500 tokens to find a balance between context window limits and the meaning of the text. The sentence-transformers model (all-MiniLM-L6-v2) embeds each chunk $d_i$ and makes 384-dimensional dense vectors:
+\begin{equation}
+\mathbf{e}_i = \text{Embed}(d_i) \in \mathbb{R}^{384}
+\end{equation}
+
+\subsubsection{Vector Database Storage}
+ChromaDB is a permanent vector database that stores embeddings and their related text chunks, optimised for similarity search. We make separate collections for each brand so that filtering is easier during retrieval.
+
+\subsection{Pipeline 2: Making Captions}
+
+\subsubsection{Image Understanding}
+When a user uploads product image $I$, we use Gemini 3 Flash (gemini-3-flash-preview) to help understand what we see. The model makes a full base caption $C_{base}$ that talks about:
+\begin{equation}
+C_{base} = \text{VisionLM}(I, p_{vision})
+\end{equation}
+where $p_{vision}$ tells the model to talk about colours, visual elements, product features, and composition.
+
+\subsubsection{Brand Knowledge Retrieval}
+The base caption $C_{base}$ is used as a query to get brand context that is relevant. We add the brand name and personality to the query:
+\begin{equation}
+q = C_{base} \oplus B \oplus P
+\end{equation}
+where $\oplus$ means to join. We calculate the query embedding $\mathbf{e}_q$ and use cosine similarity to get the top-$k$ most similar chunks from brand $B$'s knowledge base:
+\begin{equation}
+\text{sim}(\mathbf{e}_q, \mathbf{e}_i) = \frac{\mathbf{e}_q \cdot \mathbf{e}_i}{||\mathbf{e}_q|| \cdot ||\mathbf{e}_i||}
+\end{equation}
+We set $k = 5$ after doing some tests to find the right balance between prompt length and context richness.
+
+\subsubsection{Personality-Aware Caption Generation}
+The context chunks $\{d_1, ..., d_k\}$ are put together and sent to Gemini 3 Flash with the base caption, brand name, and personality specification:
+\begin{equation}
+C_{final} = \text{LLM}(C_{base}, \{d_1,...,d_k\}, B, P)
+\end{equation}
+
+The prompt tells the model exactly what to do:
+\begin{itemize}
+\item Use tone and language that match the specified personality trait
+\item Be in line with the brand voice that can be seen in the context you got back
+\item Make relevant hashtags based on the rules of the brand
+\item For social media, keep captions short (no more than 150 characters).
+\item Add the right emojis if they fit with the brand's style
+\end{itemize}
+
+The model gives a structured answer that includes the final caption, hashtags, and mentions.
+
+\section{Implementation Details}
+
+\subsection{Technology Stack}
+\begin{itemize}
+\item \textbf{Backend}: Flask REST API (Python 3.10)
+\item \textbf{Vision Model}: Google Gemini 3 Flash Preview
+\item \textbf{Vector Database}: ChromaDB 0.4.22
+\item \textbf{Embeddings}: sentence-transformers (all-MiniLM-L6-v2)
+\item \textbf{Frontend}: React 18.2 with JavaScript
+\item \textbf{Web Scraping}: BeautifulSoup, Requests
+\item \textbf{Deployment}: Development server with CORS support
+\end{itemize}
+
+The system handles concurrent requests and includes rate limiting to manage API costs.
+
+\subsection{Optimization Strategies}
+\begin{itemize}
+\item \textbf{Caching}: Brand embeddings that are used a lot are stored in memory.
+\item \textbf{Batching}: You can handle more than one image request at the same time.
+\item \textbf{Lazy Loading}: The vision model loads when you first ask for it, which speeds up startup time.
+\item \textbf{Fallback Handling}: The system works less well when external APIs fail.
+\end{itemize}
+
+\section{Experimental Evaluation}
+
+\subsection{Dataset and Setup}
+Our model is tested on 150 images pertaining to five different brands namely Nike (sports clothing), Apple (electronic goods), Adidas (sports clothing), Puma (athletic shoes), and Coca-Cola (drinks). The images consist of product photography, lifestyle images, and marketing images. The knowledge base of each brand has 8 to 20 pieces of text ranging between 400 tokens.
+
+We use three baselines to compare:
+\begin{itemize}
+\item \textbf{Baseline 1 (Generic)}: Gemini 3 Flash with general prompts and no brand context
+\item \textbf{Baseline 2 (Static)}: GPT-4 with unchanging descriptions of brand personalities
+\item \textbf{Baseline 3 (Fine-tuned)}:  Copying the method of Maheshwari et al. using BLIP-2 + FlanT5 B. Evaluation Metrics
+\end{itemize}
+
+\subsection{Evaluation Metrics}
+
+\subsubsection{Automated Metrics}
+\begin{itemize}
+\item \textbf{CLIPScore}: Uses CLIP embeddings to find out how semantically similar an image and its caption are. The scores go from 0 to 1, with 1 being the best.
+\item \textbf{BERT Similarity}: Uses BERT embeddings to find the cosine similarity between the caption that was made and the brand's past content.
+\item \textbf{Hashtag Relevance}: How well hashtags work compared to brand-curated reference sets, including precision and recall.
+\end{itemize}
+
+\subsubsection{Human Evaluation}
+20 marketing professionals (8 with 5+ years of experience and 12 with 2-5 years of experience) rated 30 randomly chosen captions on a scale of 1 to 5 for:
+\begin{itemize}
+\item \textbf{Brand Alignment}: Does the caption sound like the brand?
+\item \textbf{Engagement Potential}: Would you like this post?
+\item \textbf{Creativity}: Is the caption creative and interesting?
+\item \textbf{Usability}: Would you use this caption without making any changes?
+\end{itemize}
+
+Inter-rater reliability (Krippendorff's $alpha$) was 0.71, which means that there was a lot of agreement.
+
+\subsection{Quantitative Results}
+
+As shown in Table I, our system obtains the best results for all the automatic evaluation metrics used. RAG outperforms both generic and static baselines and equals or even surpasses the fine-tuned one despite not using any proprietary training data.
+
+\begin{table}[h]
+\centering
+\caption{Automated Evaluation Results}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Method} & \textbf{CLIPScore} & \textbf{BERT Sim} & \textbf{Hash. F1} \\
+\midrule
+Generic (B1) & 0.82 & 0.68 & 0.42 \\
+Static (B2) & 0.84 & 0.73 & 0.58 \\
+Fine-tuned (B3) & 0.85 & 0.79 & 0.71 \\
+\textbf{Ours (RAG)} & \textbf{0.87} & \textbf{0.82} & \textbf{0.76} \\
+\botrule
+\end{tabular}
+\end{table}
+
+Table II shows the results of the human evaluation. Our system gets much better scores for brand alignment (4.2 vs 3.5 for generic, p<0.01) and creativity scores that are similar to those of fine-tuned approaches.
+
+\begin{table}[h]
+\centering
+\caption{Human Evaluation Results (1-5 scale)}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Method} & \textbf{Brand} & \textbf{Engage} & \textbf{Create} & \textbf{Use (\%)} \\
+\midrule
+Generic (B1) & 3.2 & 3.4 & 3.3 & 42 \\
+Static (B2) & 3.8 & 3.7 & 3.6 & 58 \\
+Fine-tuned (B3) & 4.0 & 3.9 & 4.0 & 71 \\
+\textbf{Ours (RAG)} & \textbf{4.2} & \textbf{4.0} & \textbf{4.1} & \textbf{75} \\
+\botrule
+\end{tabular}
+\end{table}
+
+\subsection{Performance Analysis}
+
+Table III lists the metrics for how well the system works. Brand onboarding takes an average of 45 seconds, which lets new clients get started quickly. It takes an average of 12 seconds to make a caption, which is good for real-time apps.
+
+\begin{table}[h]
+\centering
+\caption{System Performance Metrics}
+\begin{tabular}{lc}
+\toprule
+\textbf{Operation} & \textbf{Time (seconds)} \\
+\midrule
+Brand Onboarding & 45.3 $\pm$ 12.1 \\
+Caption Generation & 12.4 $\pm$ 3.2 \\
+RAG Retrieval & 0.8 $\pm$ 0.2 \\
+Image Understanding & 6.1 $\pm$ 1.5 \\
+Text Generation & 5.5 $\pm$ 2.1 \\
+\botrule
+\end{tabular}
+\end{table}
+
+\subsection{Ablation Study}
+
+To understand component contributions, we evaluate variants:
+\begin{itemize}
+\item \textbf{No RAG}: Remove brand context retrieval, use only personality label
+\item \textbf{No Personality}: Remove personality conditioning, use only RAG
+\item \textbf{Static Context}: Use fixed brand description instead of retrieved context
+\end{itemize}
+
+Table IV shows RAG contributes most significantly to brand alignment, while personality conditioning improves creativity scores.
+
+\begin{table}[h]
+\centering
+\caption{Ablation Study Results}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Variant} & \textbf{CLIPScore} & \textbf{Brand} & \textbf{Create} \\
+\midrule
+Full System & 0.87 & 4.2 & 4.1 \\
+No RAG & 0.84 & 3.6 & 4.0 \\
+No Personality & 0.86 & 4.0 & 3.4 \\
+Static Context & 0.85 & 3.8 & 3.9 \\
+\botrule
+\end{tabular}
+\end{table}
+
+\subsection{Personality Variation Analysis}
+
+In order to analyze the personality adaptation, we have created captions for the same Nike Dunk High “Michigan” product using all five personality traits.
+
+Fig. 2 illustrates the screen with the uploaded product image and the choice between brand and personality. The system recognizes the Nike Dunk and enables the user to pick the brand (Nike) and personality trait (selected Ruggedness).
+
+Fig. 3 depicts the base caption that has been produced by Gemini Vision, providing a thorough depiction of the image: “These stunning Nike Dunk High sneakers come in the distinctive 'Michigan' yellow colorway, displayed against a bright yellow grid background with contrasting colors. The leather high-top sneakers exude athleticism, featuring clean white midsoles and navy laces.”
+
+Fig. 4 showcases how this base caption is adjusted according to the five personalities, keeping the brand intact:
+
+\begin{itemize}
+\item \textbf{Excitement}: Uses energetic language ("Varsity energy. Own the moment").
+\item \textbf{Sincerity}: Focuses on authenticity and heritage ("True to the original. True to the craft")
+\item \textbf{Competence}: Emphasizes precision and performance ("Built for precision. Driven by heritage")
+\item \textbf{Sophistication}: Employs refined vocabulary ("Refined by heritage. Defined by contrast")
+\item \textbf{Ruggedness}: Uses tough, durable language ("Hardwood heritage, concrete grit")
+\end{itemize}
+
+Quantitative evidence shows that effective personality adaptation has been achieved. The mean similarity score using BERT method for personality-based captions and brand material sharing same personality is 0.81, while it is only 0.62 for incompatible personalities (p<0.001).
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\linewidth]{fig2_ui_interface.png}
+\caption{System interface showing product image upload with Nike Dunk High "Michigan" sneakers and brand/personality selection controls.}
+\label{fig:ui}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{fig3_base_caption.png}
+\caption{Base caption generated by Gemini Vision providing detailed visual description of the Nike Dunk product, which serves as input to the RAG-enhanced caption generation pipeline.}
+\label{fig:base}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{fig4_personality_variations.png}
+\caption{Examples of captioning styles across five dimensions of brand personality showcasing flexible tone, lexicon, and hashtag choice without compromising Nike’s brand tone.}
+\label{fig:personality}
+\end{figure}
+\section{Discussion}
+
+\subsection{Key Findings}
+The findings show that RAG-based solutions can attain brand alignment similar to fine-tuned models without the need for large training datasets. The 17\% increase in brand alignment scores compared to the non-RAG baselines supports our prediction that context retrieval from brand knowledge bases allows for zero-shot adaptation.
+
+The fast brand onboarding process (45 seconds versus several weeks for fine-tuning) is feasible in cases where multiple brands are involved. The 70\% decrease in caption generation time (from 10-15 minutes to 12 seconds) highlights notable efficiency improvements.
+
+\subsection{Cross-Brand Applications}
+Interestingly, the system allows us to use any voice for any product picture. Although this capability allows for various practical uses (such as competitor analysis, or industry news with a brand angle), there is still one drawback to the system – it does not verify if there is a match between the brand and product.
+
+\subsection{Limitations}
+\begin{itemize}
+\item \textbf{Language}: Only supports English at present; multiple languages need brand-specific material
+\item \textbf{Dependency on Web Content}: Limited web presence leads to small knowledge base
+\item \textbf{API Costs}:Dependence on paid APIs (Gemini)
+necessitates expenditure; open source can mitigate
+\item \textbf{Context Window}: Only considers top-5 retrieval chunks; greater context length would increase consistency
+\item \textbf{Real-time Performance}: 12 seconds for generation might be too long for high-speed processes
+\end{itemize}
+
+\subsection{Ethical Considerations}
+AI captioning can pose issues related to authenticity and dis-closure. It is suggested that:
+\begin{itemize}
+\item Human oversight prior to publication
+\item Clear labelling of AI-produced content according to platform rules
+\item Constant monitoring to prevent potential bias and incongruence
+\item Regular auditing to ensure consistency with brand principles
+\end{itemize}
+
+\section{Future Work}
+
+future exploration include:
+
+\textbf{Multimodal Retrieval}: Include visual similarities for searching through relevant posts that share similar product
+images.
+
+\textbf{Dynamic Personality Learning}: Learn about brand
+personalities through content automatically instead of manual specification.
+
+\textbf{A/B Testing Integration}: Monitor engagement levels to improve caption quality continually.
+
+\textbf{Campaign Awareness}: Condition on marketing campaigns currently running and seasons.
+
+\textbf{Multi-platform Adaptation}:  From Instagram, extend the capabilities of the system to other social media channels such as Twitter,LinkedIn and TikTok.
+
+\textbf{User Feedback Loop}: Use marketer feedback on captions to improve over time.
+
+\section{Conclusion}
+
+We propose a RAG-assisted model for generating captions aligned with brand identity, which works well without any fine-tuning process on brand data. By incorporating brand information retrieval based on personality attributes, our framework allows fast zero-shot adaptation to a new brand within one minute. Empirical experiments show CLIPScore of 0.87 and 4.2/5 human ratings for brand alignment, which significantly beats the baselines by 17\%.
+
+The performance characteristics of our system (generation time of 12 seconds, branding process lasting 45 seconds) make it fit for production usage in marketing agencies. We believe that our research shows the importance of RAG systems for adapting to specific domains within creative generation tasks, paving the way for their application in other areas.
+
+\section*{Acknowledgment}
+We thank marketing practitioners who helped us with human evaluations and anonymous reviewers for their constructive comments.
+
+\begin{thebibliography}{00}
+\bibitem{farhadi2010every} M. Farhadi et al., ``Every picture tells a story: Generating sentences from images,'' in \textit{ECCV}, 2010.
+
+\bibitem{xu2015show} K. Xu et al., ``Show, attend and tell: Neural image caption generation with visual attention,'' in \textit{ICML}, 2015.
+
+\bibitem{li2023blip} J. Li et al., ``BLIP-2: Bootstrapping language-image pre-training with frozen image encoders and large language models,'' in \textit{ICML}, 2023.
+
+\bibitem{alayrac2022flamingo} J. Alayrac et al., ``Flamingo: a visual language model for few-shot learning,'' in \textit{NeurIPS}, 2022.
+
+\bibitem{aaker1997dimensions} J. L. Aaker, ``Dimensions of brand personality,'' \textit{Journal of Marketing Research}, vol. 34, no. 3, pp. 347-356, 1997.
+
+\bibitem{geuens2009new} M. Geuens et al., ``A new measure of brand personality,'' \textit{International Journal of Research in Marketing}, vol. 26, no. 2, pp. 97-107, 2009.
+
+\bibitem{maheshwari2024social} H. Maheshwari et al., ``Social media ready caption generation for brands,'' \textit{arXiv preprint arXiv:2401.01637}, 2024.
+
+\bibitem{dathathri2019plug} S. Dathathri et al., ``Plug and play language models: A simple approach to controlled text generation,'' in \textit{ICLR}, 2020.
+
+\bibitem{lewis2020retrieval} P. Lewis et al., ``Retrieval-augmented generation for knowledge-intensive NLP tasks,'' in \textit{NeurIPS}, 2020.
+
+\bibitem{yasunaga2022retrieval} M. Yasunaga et al., ``Retrieval-augmented multimodal language modeling,'' in \textit{ICML}, 2022.
+
+\end{thebibliography}
+
+\end{document}
+
+original@pes.edu

@@ -157,7 +157,7 @@ function App() {
       </main>
 
       <footer className="App-footer">
-        <p>Powered by BLIP-2, ChromaDB & Google Gemini</p>
+        <p>Powered by ChromaDB & Google Gemini</p>
       </footer>
     </div>
   );
